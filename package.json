@@ -2,6 +2,10 @@
   "name": "nutrisnap-ai-fullstack-workspace",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.x"
+  },
   "scripts": {
     "dev": "concurrently -k -p \"[{name}]\" -n \"backend,frontend\" -c \"cyan,magenta\" \"npm run dev --prefix nutrisnap-ai/backend\" \"npm run dev --prefix nutrisnap-ai/frontend\"",
     "dev:all": "npm run dev",
