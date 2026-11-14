@@ -6,12 +6,25 @@
       "framework": "vite"
     },
     "backend": {
-      "root": "nutrisnap-ai/backend"
+      "root": "nutrisnap-ai/backend",
+      "buildCommand": "npm run build"
     }
   },
   "rewrites": [
     {
+      "source": "/api",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
       "source": "/api/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/uploads",
       "destination": {
         "service": "backend"
       }
@@ -30,4 +43,3 @@
     }
   ]
 }
-

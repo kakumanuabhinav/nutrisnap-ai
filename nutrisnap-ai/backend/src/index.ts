@@ -98,27 +98,19 @@ try {
 }
 app.use("/uploads", express.static(uploadsDir));
 
-// Root info endpoint
-app.get("/", (_req, res) => {
+// Root info and API base endpoints
+app.get(["/", "/api"], (_req, res) => {
   res.json({
     status: "success",
     message: "NutriSnap AI API is running",
     service: "nutrisnap-ai-backend",
     health: "/api/health",
-  });
-});
-
-// API base and health check endpoints
-app.get("/api", (_req, res) => {
-  res.json({
-    status: "success",
-    message: "NutriSnap AI API is running",
     ok: true,
     success: true,
   });
 });
 
-app.get("/api/health", (_req, res) => {
+app.get(["/health", "/api/health"], (_req, res) => {
   res.json({
     status: "success",
     message: "Backend is running",
@@ -128,12 +120,13 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-app.use("/api/auth", authRouter);
-app.use("/api/meals", mealsRouter);
-app.use("/api/analyze-food", analyzeRouter, analyzeErrorHandler);
-app.use("/api/tracker", trackerRouter);
-app.use("/api/analytics", analyticsRouter);
-app.use("/api/profile", profileRouter);
+// Mount routes supporting both /api/<route> and /<route> prefixes
+app.use(["/api/auth", "/auth"], authRouter);
+app.use(["/api/meals", "/meals"], mealsRouter);
+app.use(["/api/analyze-food", "/analyze-food"], analyzeRouter, analyzeErrorHandler);
+app.use(["/api/tracker", "/tracker"], trackerRouter);
+app.use(["/api/analytics", "/analytics"], analyticsRouter);
+app.use(["/api/profile", "/profile"], profileRouter);
 
 // 404 for unmatched API routes
 app.use("/api", (_req, res) => res.status(404).json({ error: "Not found" }));
