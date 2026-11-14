@@ -1,8 +1,8 @@
 import { Router } from "express";
-import argon2 from "argon2";
 import crypto from "node:crypto";
 import { pool } from "../db/pool.js";
 import { signToken, requireAuth } from "../middleware/auth.js";
+import { hashPassword, verifyPassword, DUMMY_HASH } from "../services/authCrypto.js";
 import {
   registerSchema,
   loginSchema,
@@ -40,7 +40,7 @@ authRouter.post("/register", async (req, res) => {
       return res.status(409).json({ error: "An account with this email already exists" });
     }
 
-    const passwordHash = await argon2.hash(password);
+    const passwordHash = await hashPassword(password);
 
     const client = await pool.connect();
     try {
@@ -62,15 +62,15 @@ authRouter.post("/register", async (req, res) => {
       const token = signToken({ sub: user.id, email: user.email });
       setAuthCookie(res, token);
       res.status(201).json({ user: { id: user.id, name: user.name, email: user.email }, token });
-    } catch (err) {
+    } catch (err: any) {
       await client.query("ROLLBACK");
-      console.error("[auth/register transaction]", err);
+      console.error("[auth/register transaction]", err?.message || err);
       res.status(500).json({ error: "Could not create account in database" });
     } finally {
       client.release();
     }
   } catch (err: any) {
-    console.error("[auth/register unhandled]", err);
+    console.error("[auth/register unhandled]", err?.message || err);
     res.status(500).json({ error: err?.message || "Registration failed" });
   }
 });
@@ -88,11 +88,7 @@ authRouter.post("/login", async (req, res) => {
       [email],
     );
     const user = result.rows[0];
-    // Constant-shape response whether or not the user exists, to avoid
-    // leaking account existence via timing/response differences.
-    const dummyHash =
-      "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$Ct9GcJ8VJ9U6c8f3s6b7Kk4mNq2xO5xR8s0uYQ0v1qE";
-    const ok = await argon2.verify(user?.password_hash ?? dummyHash, password).catch(() => false);
+    const ok = await verifyPassword(user?.password_hash ?? DUMMY_HASH, password);
 
     if (!user || !ok) {
       return res.status(401).json({ error: "Invalid email or password" });
@@ -118,12 +114,17 @@ authRouter.post("/logout", (_req, res) => {
 });
 
 authRouter.get("/me", requireAuth, async (req, res) => {
-  const result = await pool.query(
-    "SELECT id, name, email, created_at FROM users WHERE id = $1",
-    [req.user!.sub],
-  );
-  if (!result.rowCount) return res.status(404).json({ error: "User not found" });
-  res.json({ user: result.rows[0] });
+  try {
+    const result = await pool.query(
+      "SELECT id, name, email, created_at FROM users WHERE id = $1",
+      [req.user!.sub],
+    );
+    if (!result.rowCount) return res.status(404).json({ error: "User not found" });
+    res.json({ user: result.rows[0] });
+  } catch (err: any) {
+    console.error("[auth/me]", err?.message || err);
+    res.status(500).json({ error: "Failed to load user profile" });
+  }
 });
 
 // Forgot / reset password. Tokens are stored hashed and are single-use.
@@ -162,7 +163,7 @@ authRouter.post("/reset-password", async (req, res) => {
   const row = result.rows[0];
   if (!row) return res.status(400).json({ error: "Reset link is invalid or expired" });
 
-  const passwordHash = await argon2.hash(parsed.data.password);
+  const passwordHash = await hashPassword(parsed.data.password);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -173,9 +174,9 @@ authRouter.post("/reset-password", async (req, res) => {
     await client.query("UPDATE password_reset_tokens SET used_at = now() WHERE id = $1", [row.id]);
     await client.query("COMMIT");
     res.json({ ok: true });
-  } catch (err) {
+  } catch (err: any) {
     await client.query("ROLLBACK");
-    console.error("[auth/reset-password]", err);
+    console.error("[auth/reset-password]", err?.message || err);
     res.status(500).json({ error: "Could not reset password" });
   } finally {
     client.release();

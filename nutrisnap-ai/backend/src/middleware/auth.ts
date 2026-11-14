@@ -2,11 +2,20 @@ import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import type { AuthTokenPayload } from "../types/index.js";
 
-const AUTH_SECRET = process.env.AUTH_SECRET;
+export function getAuthSecret(): string {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("AUTH_SECRET is not configured in production environment variables");
+    }
+    return "dev-nutrisnap-auth-fallback-secret-at-least-32-chars-long";
+  }
+  return secret;
+}
 
 export function signToken(payload: AuthTokenPayload): string {
-  if (!AUTH_SECRET) throw new Error("AUTH_SECRET is not configured");
-  return jwt.sign(payload, AUTH_SECRET, {
+  const secret = getAuthSecret();
+  return jwt.sign(payload, secret, {
     expiresIn: (process.env.AUTH_TOKEN_TTL || "7d") as jwt.SignOptions["expiresIn"],
   });
 }
@@ -27,15 +36,20 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!token) {
     return res.status(401).json({ error: "Not authenticated" });
   }
-  if (!AUTH_SECRET) {
-    return res.status(500).json({ error: "Server auth misconfigured" });
+
+  let secret: string;
+  try {
+    secret = getAuthSecret();
+  } catch (err: any) {
+    console.error("[auth] AUTH_SECRET configuration error:", err?.message || err);
+    return res.status(500).json({ error: "Server authentication misconfigured. Please configure AUTH_SECRET." });
   }
 
   try {
-    const payload = jwt.verify(token, AUTH_SECRET) as AuthTokenPayload;
+    const payload = jwt.verify(token, secret) as AuthTokenPayload;
     req.user = payload;
     next();
-  } catch {
+  } catch (err: any) {
     return res.status(401).json({ error: "Invalid or expired session" });
   }
 }

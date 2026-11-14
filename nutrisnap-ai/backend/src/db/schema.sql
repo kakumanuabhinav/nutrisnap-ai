@@ -2,6 +2,7 @@
 -- Run via: npm run migrate  (see src/db/migrate.ts)
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto; -- for gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS citext;   -- for case-insensitive email
 
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -11,9 +12,6 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- CITEXT (case-insensitive email) requires the citext extension.
-CREATE EXTENSION IF NOT EXISTS citext;
 
 CREATE TABLE IF NOT EXISTS user_profiles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

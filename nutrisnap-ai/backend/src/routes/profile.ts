@@ -1,7 +1,7 @@
 import { Router } from "express";
-import argon2 from "argon2";
 import { pool } from "../db/pool.js";
 import { requireAuth } from "../middleware/auth.js";
+import { hashPassword, verifyPassword } from "../services/authCrypto.js";
 import { updateProfileSchema, changePasswordSchema } from "../utils/validation.js";
 
 export const profileRouter = Router();
@@ -118,10 +118,10 @@ profileRouter.post("/change-password", async (req, res) => {
 
   const userId = req.user!.sub;
   const result = await pool.query("SELECT password_hash FROM users WHERE id = $1", [userId]);
-  const ok = await argon2.verify(result.rows[0].password_hash, parsed.data.current_password);
+  const ok = await verifyPassword(result.rows[0].password_hash, parsed.data.current_password);
   if (!ok) return res.status(401).json({ error: "Current password is incorrect" });
 
-  const newHash = await argon2.hash(parsed.data.new_password);
+  const newHash = await hashPassword(parsed.data.new_password);
   await pool.query("UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", [
     newHash,
     userId,

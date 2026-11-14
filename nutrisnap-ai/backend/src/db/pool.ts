@@ -19,24 +19,32 @@ class HybridPool {
   private initPromise: Promise<void> | null = null;
 
   constructor() {
-    if (process.env.DATABASE_URL) {
+    this.initPgPool();
+  }
+
+  private initPgPool() {
+    if (process.env.DATABASE_URL && !this.pgPool) {
+      const dbUrl = process.env.DATABASE_URL;
       const isRemotePg =
-        !process.env.DATABASE_URL.includes("localhost") &&
-        !process.env.DATABASE_URL.includes("127.0.0.1");
+        !dbUrl.includes("localhost") &&
+        !dbUrl.includes("127.0.0.1");
+      const isNeon = dbUrl.includes("neon.tech");
       const useSsl =
         process.env.DATABASE_SSL === "true" ||
-        (process.env.NODE_ENV === "production" && isRemotePg);
+        process.env.NODE_ENV === "production" ||
+        isRemotePg ||
+        isNeon;
 
       this.pgPool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        max: Number(process.env.DB_POOL_MAX || 10),
+        connectionString: dbUrl,
+        max: Number(process.env.DB_POOL_MAX || (process.env.VERCEL ? 3 : 10)),
         idleTimeoutMillis: 30_000,
-        connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS || 5000),
+        connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS || 7000),
         ssl: useSsl ? { rejectUnauthorized: false } : undefined,
       });
 
       this.pgPool.on("error", (err) => {
-        console.error("[db] Unexpected error on idle Postgres client", err);
+        console.error("[db] Unexpected error on idle Postgres client", err.message);
       });
     }
   }
@@ -44,16 +52,47 @@ class HybridPool {
   private async ensureInitialized(): Promise<void> {
     if (this.initPromise) return this.initPromise;
     this.initPromise = (async () => {
+      this.initPgPool();
+
       if (this.pgPool) {
+        let client: any = null;
         try {
-          // Quick probe to check if Postgres is actually running and reachable
-          const client = await this.pgPool.connect();
-          client.release();
+          // Probe PostgreSQL connection
+          client = await this.pgPool.connect();
           console.log("[db] Connected to PostgreSQL at", process.env.DATABASE_URL?.replace(/:[^:@]+@/, ":****@"));
+
+          // Verify whether required tables exist, auto-migrating if empty (e.g. fresh Neon database)
+          const tableCheck = await client.query(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users'",
+          );
+          if (tableCheck.rowCount === 0) {
+            console.log("[db] Required tables missing on PostgreSQL. Auto-migrating schema...");
+            const backendDir = path.resolve(__dirname, "..", "..");
+            const schemaCandidates = [
+              path.join(__dirname, "schema.sql"),
+              path.join(__dirname, "..", "src", "db", "schema.sql"),
+              path.resolve(backendDir, "src", "db", "schema.sql"),
+              path.resolve(backendDir, "dist", "db", "schema.sql"),
+              path.resolve(process.cwd(), "src", "db", "schema.sql"),
+              path.resolve(process.cwd(), "dist", "db", "schema.sql"),
+              path.resolve(process.cwd(), "nutrisnap-ai", "backend", "src", "db", "schema.sql"),
+              path.resolve(process.cwd(), "nutrisnap-ai", "backend", "dist", "db", "schema.sql"),
+            ];
+            const schemaPath = schemaCandidates.find((p) => existsSync(p)) || path.join(__dirname, "schema.sql");
+            if (existsSync(schemaPath)) {
+              const sql = readFileSync(schemaPath, "utf-8");
+              await client.query(sql);
+              console.log("[db] PostgreSQL schema successfully initialized.");
+            } else {
+              console.warn("[db] Warning: schema.sql not found at candidates, skipping auto-migration.");
+            }
+          }
           return;
         } catch (err: any) {
           console.warn(`[db] Could not connect to PostgreSQL (${err.code || err.message}). Switching to local PGlite embedded database fallback.`);
           this.isFallback = true;
+        } finally {
+          if (client) client.release();
         }
       } else {
         console.warn("[db] DATABASE_URL is not set. Using local PGlite embedded database.");
