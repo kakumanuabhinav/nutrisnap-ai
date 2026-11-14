@@ -20,7 +20,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = Number(process.env.PORT) || 4000;
+const HOST = process.env.HOST || "0.0.0.0";
 
 app.set("trust proxy", 1);
 
@@ -32,19 +33,35 @@ app.use(
 );
 
 const isProd = process.env.NODE_ENV === "production";
-const rawCorsOrigin = process.env.CORS_ORIGIN || "http://localhost:5173";
-const allowedOrigins = rawCorsOrigin.includes(",")
+const rawCorsOrigin = process.env.CORS_ORIGIN || "";
+const configuredOrigins = rawCorsOrigin
   ? rawCorsOrigin.split(",").map((o) => o.trim())
-  : rawCorsOrigin;
+  : ["http://localhost:5173", "http://127.0.0.1:5173"];
 
-if (isProd && !process.env.CORS_ORIGIN) {
-  console.warn("[cors] Warning: CORS_ORIGIN is not set in production. Set CORS_ORIGIN to your frontend URL.");
-}
-
-// CORS: allow credentials and accept development requests while preserving production origin restrictions
+// CORS: allow credentials, allow local development, configured origins, and Vercel domains
 app.use(
   cors({
-    origin: isProd ? allowedOrigins : true,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, server-to-server, or same-origin rewrites)
+      if (!origin) return callback(null, true);
+
+      // In development or if explicitly wildcarded, allow
+      if (!isProd || rawCorsOrigin === "*") {
+        return callback(null, true);
+      }
+
+      // Check configured origins
+      if (configuredOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // Automatically allow Vercel preview and production domains (*.vercel.app)
+      if (/^https:\/\/[a-zA-Z0-9_.-]+\.vercel\.app$/.test(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(null, false);
+    },
     credentials: true,
   }),
 );
@@ -64,23 +81,51 @@ app.use(
 );
 
 // Serve locally-stored uploads (STORAGE_DRIVER=local only).
+const isVercel = !!process.env.VERCEL;
 const backendRoot = path.resolve(__dirname, "..");
-const uploadsDir = existsSync(path.resolve(backendRoot, "uploads"))
+const uploadsDir = isVercel
+  ? path.join("/tmp", "uploads")
+  : existsSync(path.resolve(backendRoot, "uploads"))
   ? path.resolve(backendRoot, "uploads")
   : existsSync(path.resolve(process.cwd(), "nutrisnap-ai", "backend", "uploads"))
   ? path.resolve(process.cwd(), "nutrisnap-ai", "backend", "uploads")
   : path.resolve(process.cwd(), "uploads");
 
-mkdirSync(uploadsDir, { recursive: true });
+try {
+  mkdirSync(uploadsDir, { recursive: true });
+} catch (e: any) {
+  console.warn("[uploads] Notice: Unable to create uploads directory:", e.message);
+}
 app.use("/uploads", express.static(uploadsDir));
+
+// Root info endpoint
+app.get("/", (_req, res) => {
+  res.json({
+    status: "success",
+    message: "NutriSnap AI API is running",
+    service: "nutrisnap-ai-backend",
+    health: "/api/health",
+  });
+});
 
 // API base and health check endpoints
 app.get("/api", (_req, res) => {
-  res.json({ success: true, message: "NutriSnap AI API is running" });
+  res.json({
+    status: "success",
+    message: "NutriSnap AI API is running",
+    ok: true,
+    success: true,
+  });
 });
 
 app.get("/api/health", (_req, res) => {
-  res.json({ success: true, status: "healthy", ok: true, service: "nutrisnap-ai-backend" });
+  res.json({
+    status: "success",
+    message: "Backend is running",
+    ok: true,
+    success: true,
+    service: "nutrisnap-ai-backend",
+  });
 });
 
 app.use("/api/auth", authRouter);
@@ -106,31 +151,59 @@ app.use(
   },
 );
 
-const server = app.listen(PORT, () => {
-  console.log(`NutriSnap AI backend running on http://localhost:${PORT}`);
-});
+if (!process.env.VERCEL) {
+  const server = app.listen(PORT, HOST, () => {
+    const displayHost = HOST === "0.0.0.0" ? "localhost" : HOST;
+    console.log(`NutriSnap AI backend listening on http://${displayHost}:${PORT}`);
+  });
 
-// Graceful shutdown for container and process orchestrators
-const shutdown = async (signal: string) => {
-  console.log(`[server] ${signal} received, closing HTTP server and database pool...`);
-  server.close(async () => {
-    try {
-      await pool.end();
-      console.log("[server] Graceful shutdown completed.");
-      process.exit(0);
-    } catch (err) {
-      console.error("[server] Error closing database pool:", err);
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `[server] Port ${PORT} is already in use by another process. Please stop that process or change PORT in .env.`,
+      );
+      process.exit(1);
+    } else {
+      console.error("[server] Server startup error:", err);
       process.exit(1);
     }
   });
 
-  setTimeout(() => {
-    console.error("[server] Forced shutdown after timeout.");
-    process.exit(1);
-  }, 10_000).unref();
-};
+  // Pre-warm database connection asynchronously on startup
+  pool.query("SELECT 1").catch((err) => {
+    console.warn("[server] Initial database check warning:", err.message);
+  });
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+  // Graceful shutdown for container and process orchestrators
+  const shutdown = async (signal: string) => {
+    console.log(`[server] ${signal} received, closing HTTP server and database pool...`);
+    server.close(async () => {
+      try {
+        await pool.end();
+        console.log("[server] Graceful shutdown completed.");
+        process.exit(0);
+      } catch (err) {
+        console.error("[server] Error closing database pool:", err);
+        process.exit(1);
+      }
+    });
+
+    setTimeout(() => {
+      console.error("[server] Forced shutdown after timeout.");
+      process.exit(1);
+    }, 10_000).unref();
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+} else {
+  // On Vercel serverless, warm up DB query immediately
+  pool.query("SELECT 1").catch((err) => {
+    console.warn("[server] Vercel serverless database check warning:", err.message);
+  });
+}
+
+export default app;
+export { app };
 
 

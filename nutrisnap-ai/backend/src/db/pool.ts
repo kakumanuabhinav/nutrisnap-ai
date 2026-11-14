@@ -30,6 +30,7 @@ class HybridPool {
         connectionString: process.env.DATABASE_URL,
         max: Number(process.env.DB_POOL_MAX || 10),
         idleTimeoutMillis: 30_000,
+        connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS || 5000),
         ssl: useSsl ? { rejectUnauthorized: false } : undefined,
       });
 
@@ -59,16 +60,23 @@ class HybridPool {
       }
 
       if (this.isFallback && !this.pglite) {
+        const isVercel = !!process.env.VERCEL;
         const backendDir = path.resolve(__dirname, "..", "..");
-        const dataDir = existsSync(path.resolve(backendDir, "data"))
-          ? path.resolve(backendDir, "data")
-          : existsSync(path.resolve(process.cwd(), "nutrisnap-ai", "backend", "data"))
-          ? path.resolve(process.cwd(), "nutrisnap-ai", "backend", "data")
-          : path.resolve(backendDir, "data");
+        const dataDir = isVercel
+          ? path.join("/tmp", "data")
+          : existsSync(path.resolve(backendDir, "data"))
+            ? path.resolve(backendDir, "data")
+            : existsSync(path.resolve(process.cwd(), "nutrisnap-ai", "backend", "data"))
+              ? path.resolve(process.cwd(), "nutrisnap-ai", "backend", "data")
+              : path.resolve(backendDir, "data");
 
-        mkdirSync(dataDir, { recursive: true });
+        try {
+          mkdirSync(dataDir, { recursive: true });
+        } catch (e: any) {
+          console.warn("[db] Notice: Unable to create data dir:", e.message);
+        }
         this.pglite = new PGlite(path.resolve(dataDir, "nutrisnap.db"));
-        
+
         // Auto-run schema migration on PGlite
         const schemaCandidates = [
           path.join(__dirname, "schema.sql"),
@@ -84,7 +92,7 @@ class HybridPool {
           .replace(/CREATE EXTENSION IF NOT EXISTS citext;/g, "")
           .replace(/CREATE EXTENSION IF NOT EXISTS pgcrypto;/g, "")
           .replace(/\bCITEXT\b/g, "TEXT");
-        
+
         await this.pglite.exec(cleanSql);
         console.log("[db] Local PGlite embedded database ready.");
       }
@@ -99,9 +107,20 @@ class HybridPool {
         const res: QueryResult = await this.pgPool.query(text, params);
         return { rows: res.rows as T[], rowCount: res.rowCount ?? res.rows.length };
       } catch (err: any) {
-        if (err.code === "ECONNREFUSED" || err.code === "57P01") {
-          console.warn("[db] Postgres connection failed on query, using PGlite fallback.");
+        const isConnErr =
+          err.code === "ECONNREFUSED" ||
+          err.code === "57P01" ||
+          err.code === "EACCES" ||
+          err.code === "ETIMEDOUT" ||
+          err.code === "ENOTFOUND" ||
+          err.code === "ECONNRESET" ||
+          err.code === "EHOSTUNREACH" ||
+          err.code === "EADDRNOTAVAIL";
+        if (isConnErr) {
+          console.warn(`[db] Postgres connection error (${err.code || err.message}). Switching to local PGlite fallback.`);
           this.isFallback = true;
+          this.initPromise = null;
+          await this.ensureInitialized();
           return this.query<T>(text, params);
         }
         throw err;
@@ -119,8 +138,15 @@ class HybridPool {
   async exec(sql: string): Promise<void> {
     await this.ensureInitialized();
     if (!this.isFallback && this.pgPool) {
-      await this.pgPool.query(sql);
-      return;
+      try {
+        await this.pgPool.query(sql);
+        return;
+      } catch (err: any) {
+        console.warn(`[db] Postgres exec error (${err.code || err.message}). Switching to local PGlite fallback.`);
+        this.isFallback = true;
+        this.initPromise = null;
+        await this.ensureInitialized();
+      }
     }
     if (this.pglite) {
       const cleanSql = sql
@@ -136,14 +162,21 @@ class HybridPool {
   async connect(): Promise<DBClient> {
     await this.ensureInitialized();
     if (!this.isFallback && this.pgPool) {
-      const client = await this.pgPool.connect();
-      return {
-        query: async <T = any>(text: string, params?: any[]) => {
-          const res = await client.query(text, params);
-          return { rows: res.rows as T[], rowCount: res.rowCount ?? res.rows.length };
-        },
-        release: () => client.release(),
-      };
+      try {
+        const client = await this.pgPool.connect();
+        return {
+          query: async <T = any>(text: string, params?: any[]) => {
+            const res = await client.query(text, params);
+            return { rows: res.rows as T[], rowCount: res.rowCount ?? res.rows.length };
+          },
+          release: () => client.release(),
+        };
+      } catch (err: any) {
+        console.warn(`[db] Postgres connect error (${err.code || err.message}). Switching to local PGlite fallback.`);
+        this.isFallback = true;
+        this.initPromise = null;
+        await this.ensureInitialized();
+      }
     }
 
     if (this.pglite) {

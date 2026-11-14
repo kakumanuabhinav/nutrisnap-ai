@@ -41,6 +41,16 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    host: "localhost",
+    host: true,
+    proxy: {
+      "/api": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+      },
+      "/uploads": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+      },
+    },
   },
 });

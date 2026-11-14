@@ -7,7 +7,10 @@ import sharp from "sharp";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const backendDir = path.resolve(__dirname, "..", "..");
-const UPLOAD_DIR = existsSync(path.resolve(backendDir, "uploads"))
+const isVercel = !!process.env.VERCEL;
+const UPLOAD_DIR = isVercel
+  ? path.join("/tmp", "uploads")
+  : existsSync(path.resolve(backendDir, "uploads"))
   ? path.resolve(backendDir, "uploads")
   : existsSync(path.resolve(process.cwd(), "nutrisnap-ai", "backend", "uploads"))
   ? path.resolve(process.cwd(), "nutrisnap-ai", "backend", "uploads")
@@ -32,8 +35,12 @@ export async function storeImage(buffer: Buffer, mimeType: string): Promise<stri
   const filename = `${crypto.randomUUID()}.jpg`;
 
   if (driver === "local") {
-    await mkdir(UPLOAD_DIR, { recursive: true });
-    await writeFile(path.join(UPLOAD_DIR, filename), compressed);
+    try {
+      await mkdir(UPLOAD_DIR, { recursive: true });
+      await writeFile(path.join(UPLOAD_DIR, filename), compressed);
+    } catch (err: any) {
+      console.warn("[storage] Warning writing to upload directory:", err.message);
+    }
     const publicBase =
       process.env.BACKEND_PUBLIC_URL ||
       process.env.APP_URL ||

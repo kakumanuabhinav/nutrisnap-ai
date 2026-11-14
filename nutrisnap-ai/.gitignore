@@ -8,6 +8,10 @@ dist/
 build/
 coverage/
 
+# Vercel deployment artifacts
+.vercel/
+.vercel
+
 # Environment and sensitive keys
 .env
 .env.*
@@ -16,6 +20,8 @@ coverage/
 .env.test.local
 .env.production.local
 !.env.example
+!.env.production
+!.env.development
 
 # Local storage and persistent database files
 uploads/
