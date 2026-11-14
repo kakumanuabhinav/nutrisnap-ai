@@ -4,6 +4,7 @@ import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync } from "node:fs";
@@ -84,7 +85,7 @@ app.use(
 const isVercel = !!process.env.VERCEL;
 const backendRoot = path.resolve(__dirname, "..");
 const uploadsDir = isVercel
-  ? path.join("/tmp", "uploads")
+  ? path.join(os.tmpdir(), "uploads")
   : existsSync(path.resolve(backendRoot, "uploads"))
   ? path.resolve(backendRoot, "uploads")
   : existsSync(path.resolve(process.cwd(), "nutrisnap-ai", "backend", "uploads"))

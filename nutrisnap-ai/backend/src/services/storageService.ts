@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
@@ -9,12 +10,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const backendDir = path.resolve(__dirname, "..", "..");
 const isVercel = !!process.env.VERCEL;
 const UPLOAD_DIR = isVercel
-  ? path.join("/tmp", "uploads")
+  ? path.join(os.tmpdir(), "uploads")
   : existsSync(path.resolve(backendDir, "uploads"))
-  ? path.resolve(backendDir, "uploads")
-  : existsSync(path.resolve(process.cwd(), "nutrisnap-ai", "backend", "uploads"))
-  ? path.resolve(process.cwd(), "nutrisnap-ai", "backend", "uploads")
-  : path.resolve(backendDir, "uploads");
+    ? path.resolve(backendDir, "uploads")
+    : existsSync(path.resolve(process.cwd(), "nutrisnap-ai", "backend", "uploads"))
+      ? path.resolve(process.cwd(), "nutrisnap-ai", "backend", "uploads")
+      : path.resolve(backendDir, "uploads");
 
 /**
  * Compresses and stores an image, returning a public URL.

@@ -7,6 +7,8 @@
     },
     "backend": {
       "root": "nutrisnap-ai/backend",
+      "framework": "express",
+      "entrypoint": "api/index.js",
       "buildCommand": "npm run build"
     }
   },

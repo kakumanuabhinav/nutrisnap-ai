@@ -1,6 +1,7 @@
 import { Pool, QueryResult } from "pg";
 import { PGlite } from "@electric-sql/pglite";
 import { readFileSync, mkdirSync, existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,7 +64,7 @@ class HybridPool {
         const isVercel = !!process.env.VERCEL;
         const backendDir = path.resolve(__dirname, "..", "..");
         const dataDir = isVercel
-          ? path.join("/tmp", "data")
+          ? path.join(os.tmpdir(), "data")
           : existsSync(path.resolve(backendDir, "data"))
             ? path.resolve(backendDir, "data")
             : existsSync(path.resolve(process.cwd(), "nutrisnap-ai", "backend", "data"))
