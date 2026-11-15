@@ -12,7 +12,8 @@
     "build": "tsc -p tsconfig.json && node scripts/copySchema.js",
     "start": "node dist/index.js",
     "migrate": "tsx src/db/migrate.ts",
-    "migrate:prod": "node dist/db/migrate.js",
+    "migrate:prod": "node dist/db/migrate.js --strict",
+    "migrate:neon": "node dist/db/migrate.js --strict",
     "test": "vitest run"
   },
   "dependencies": {

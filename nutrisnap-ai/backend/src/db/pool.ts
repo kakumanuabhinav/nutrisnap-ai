@@ -1,9 +1,10 @@
 import { Pool, QueryResult } from "pg";
 import { PGlite } from "@electric-sql/pglite";
-import { readFileSync, mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { SCHEMA_SQL, REQUIRED_TABLES, getCleanSqlForPGlite } from "./schema.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -61,31 +62,18 @@ class HybridPool {
           client = await this.pgPool.connect();
           console.log("[db] Connected to PostgreSQL at", process.env.DATABASE_URL?.replace(/:[^:@]+@/, ":****@"));
 
-          // Verify whether required tables exist, auto-migrating if empty (e.g. fresh Neon database)
+          // Verify PostgreSQL connectivity and check whether required tables exist
           const tableCheck = await client.query(
-            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users'",
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'",
           );
-          if (tableCheck.rowCount === 0) {
-            console.log("[db] Required tables missing on PostgreSQL. Auto-migrating schema...");
-            const backendDir = path.resolve(__dirname, "..", "..");
-            const schemaCandidates = [
-              path.join(__dirname, "schema.sql"),
-              path.join(__dirname, "..", "src", "db", "schema.sql"),
-              path.resolve(backendDir, "src", "db", "schema.sql"),
-              path.resolve(backendDir, "dist", "db", "schema.sql"),
-              path.resolve(process.cwd(), "src", "db", "schema.sql"),
-              path.resolve(process.cwd(), "dist", "db", "schema.sql"),
-              path.resolve(process.cwd(), "nutrisnap-ai", "backend", "src", "db", "schema.sql"),
-              path.resolve(process.cwd(), "nutrisnap-ai", "backend", "dist", "db", "schema.sql"),
-            ];
-            const schemaPath = schemaCandidates.find((p) => existsSync(p)) || path.join(__dirname, "schema.sql");
-            if (existsSync(schemaPath)) {
-              const sql = readFileSync(schemaPath, "utf-8");
-              await client.query(sql);
-              console.log("[db] PostgreSQL schema successfully initialized.");
-            } else {
-              console.warn("[db] Warning: schema.sql not found at candidates, skipping auto-migration.");
-            }
+          const existingTables = new Set(tableCheck.rows.map((r: any) => r.table_name));
+          const missingTables = REQUIRED_TABLES.filter((t) => !existingTables.has(t));
+          if (missingTables.length > 0) {
+            console.warn(
+              `[db] Notice: ${missingTables.length} required tables not found in PostgreSQL (${missingTables.join(", ")}). Please run 'npm run migrate' against DATABASE_URL to initialize schema.`,
+            );
+          } else {
+            console.log("[db] PostgreSQL verified: all required application tables are active.");
           }
           return;
         } catch (err: any) {
@@ -117,22 +105,8 @@ class HybridPool {
         }
         this.pglite = new PGlite(path.resolve(dataDir, "nutrisnap.db"));
 
-        // Auto-run schema migration on PGlite
-        const schemaCandidates = [
-          path.join(__dirname, "schema.sql"),
-          path.join(__dirname, "..", "src", "db", "schema.sql"),
-          path.resolve(backendDir, "src", "db", "schema.sql"),
-          path.resolve(backendDir, "dist", "db", "schema.sql"),
-          path.resolve(process.cwd(), "src", "db", "schema.sql"),
-          path.resolve(process.cwd(), "nutrisnap-ai", "backend", "src", "db", "schema.sql"),
-        ];
-        const schemaPath = schemaCandidates.find((p) => existsSync(p)) || path.join(__dirname, "schema.sql");
-        const sql = readFileSync(schemaPath, "utf-8");
-        const cleanSql = sql
-          .replace(/CREATE EXTENSION IF NOT EXISTS citext;/g, "")
-          .replace(/CREATE EXTENSION IF NOT EXISTS pgcrypto;/g, "")
-          .replace(/\bCITEXT\b/g, "TEXT");
-
+        // Initialize embedded schema using in-memory DDL (zero file I/O dependencies)
+        const cleanSql = getCleanSqlForPGlite(SCHEMA_SQL);
         await this.pglite.exec(cleanSql);
         console.log("[db] Local PGlite embedded database ready.");
       }
@@ -147,6 +121,9 @@ class HybridPool {
         const res: QueryResult = await this.pgPool.query(text, params);
         return { rows: res.rows as T[], rowCount: res.rowCount ?? res.rows.length };
       } catch (err: any) {
+        if (err.code === "42P01") {
+          console.error(`[db] Schema error: Table does not exist (42P01: ${err.message}). Run 'npm run migrate' to create tables.`);
+        }
         const isConnErr =
           err.code === "ECONNREFUSED" ||
           err.code === "57P01" ||

@@ -118,6 +118,8 @@ app.get(["/health", "/api/health"], (_req, res) => {
     ok: true,
     success: true,
     service: "nutrisnap-ai-backend",
+    databaseConfigured: Boolean(process.env.DATABASE_URL),
+    authConfigured: Boolean(process.env.AUTH_SECRET),
   });
 });
 

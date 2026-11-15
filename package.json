@@ -13,7 +13,9 @@
     "dev:backend": "npm run dev --prefix nutrisnap-ai/backend",
     "build": "npm run build --prefix nutrisnap-ai/backend && npm run build --prefix nutrisnap-ai/frontend",
     "start": "npm run start --prefix nutrisnap-ai/backend",
-    "migrate": "npm run migrate --prefix nutrisnap-ai/backend"
+    "migrate": "npm run migrate --prefix nutrisnap-ai/backend",
+    "migrate:prod": "npm run migrate:prod --prefix nutrisnap-ai/backend",
+    "migrate:neon": "npm run migrate:neon --prefix nutrisnap-ai/backend"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"

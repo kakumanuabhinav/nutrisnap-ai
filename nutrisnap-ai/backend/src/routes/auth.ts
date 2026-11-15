@@ -64,14 +64,14 @@ authRouter.post("/register", async (req, res) => {
       res.status(201).json({ user: { id: user.id, name: user.name, email: user.email }, token });
     } catch (err: any) {
       await client.query("ROLLBACK");
-      console.error("[auth/register transaction]", err?.message || err);
-      res.status(500).json({ error: "Could not create account in database" });
+      console.error("[auth/register transaction error]", { code: err?.code, name: err?.name, message: err?.message });
+      res.status(500).json({ error: "Could not create account in database", code: err?.code || "DB_TRANSACTION_ERROR" });
     } finally {
       client.release();
     }
   } catch (err: any) {
-    console.error("[auth/register unhandled]", err?.message || err);
-    res.status(500).json({ error: err?.message || "Registration failed" });
+    console.error("[auth/register error]", { code: err?.code, name: err?.name, message: err?.message });
+    res.status(500).json({ error: err?.message || "Registration failed", code: err?.code || "REGISTRATION_ERROR" });
   }
 });
 
@@ -98,8 +98,8 @@ authRouter.post("/login", async (req, res) => {
     setAuthCookie(res, token);
     res.json({ user: { id: user.id, name: user.name, email: user.email }, token });
   } catch (err: any) {
-    console.error("[auth/login unhandled]", err);
-    res.status(500).json({ error: err?.message || "Login failed due to a server/database error" });
+    console.error("[auth/login error]", { code: err?.code, name: err?.name, message: err?.message });
+    res.status(500).json({ error: "Login failed due to a server/database error", code: err?.code || "LOGIN_ERROR" });
   }
 });
 
@@ -122,8 +122,8 @@ authRouter.get("/me", requireAuth, async (req, res) => {
     if (!result.rowCount) return res.status(404).json({ error: "User not found" });
     res.json({ user: result.rows[0] });
   } catch (err: any) {
-    console.error("[auth/me]", err?.message || err);
-    res.status(500).json({ error: "Failed to load user profile" });
+    console.error("[auth/me error]", { code: err?.code, name: err?.name, message: err?.message });
+    res.status(500).json({ error: "Failed to load user profile", code: err?.code || "PROFILE_LOAD_ERROR" });
   }
 });
 
