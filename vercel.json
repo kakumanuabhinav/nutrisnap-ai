@@ -9,7 +9,7 @@
       "root": "nutrisnap-ai/backend",
       "framework": "express",
       "entrypoint": "api/index.js",
-      "installCommand": "npm install",
+      "installCommand": "npm install --prefix nutrisnap-ai/backend",
       "buildCommand": "npm run build"
     }
   },
