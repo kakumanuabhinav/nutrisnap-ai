@@ -120,6 +120,8 @@ app.get(["/health", "/api/health"], (_req, res) => {
     service: "nutrisnap-ai-backend",
     databaseConfigured: Boolean(process.env.DATABASE_URL),
     authConfigured: Boolean(process.env.AUTH_SECRET),
+    isVercel,
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -193,11 +195,14 @@ if (!process.env.VERCEL) {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 } else {
-  // On Vercel serverless, warm up DB query immediately
-  pool.query("SELECT 1").catch((err) => {
-    console.warn("[server] Vercel serverless database check warning:", err.message);
-  });
+  // In serverless environments (Vercel), avoid fire-and-forget background queries on startup.
+  // Database connections are established on-demand when an incoming request hits an authenticated route.
+  console.log(`[server] Serverless function ready (Vercel runtime: ${process.version})`);
 }
+
+console.log(
+  `[startup] NutriSnap AI backend initialized (isVercel: ${isVercel}, isProd: ${isProd}, node: ${process.version})`,
+);
 
 export default app;
 export { app };

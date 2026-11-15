@@ -1,5 +1,5 @@
 import { Pool, QueryResult } from "pg";
-import { PGlite } from "@electric-sql/pglite";
+import type { PGlite as PGliteType } from "@electric-sql/pglite";
 import { mkdirSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,7 +15,7 @@ interface DBClient {
 
 class HybridPool {
   private pgPool: Pool | null = null;
-  private pglite: PGlite | null = null;
+  private pglite: PGliteType | null = null;
   private isFallback = false;
   private initPromise: Promise<void> | null = null;
 
@@ -55,6 +55,12 @@ class HybridPool {
     this.initPromise = (async () => {
       this.initPgPool();
 
+      const isVercel = !!process.env.VERCEL;
+      const isRemote =
+        !!process.env.DATABASE_URL &&
+        !process.env.DATABASE_URL.includes("localhost") &&
+        !process.env.DATABASE_URL.includes("127.0.0.1");
+
       if (this.pgPool) {
         let client: any = null;
         try {
@@ -77,32 +83,39 @@ class HybridPool {
           }
           return;
         } catch (err: any) {
+          if (isVercel || isRemote) {
+            console.error(`[db] Production PostgreSQL connection failed: ${err.message}`);
+            this.initPromise = null; // Reset so subsequent requests can re-attempt
+            throw err;
+          }
           console.warn(`[db] Could not connect to PostgreSQL (${err.code || err.message}). Switching to local PGlite embedded database fallback.`);
           this.isFallback = true;
         } finally {
           if (client) client.release();
         }
       } else {
+        if (isVercel || isRemote) {
+          this.initPromise = null;
+          throw new Error("DATABASE_URL is not configured for production environment.");
+        }
         console.warn("[db] DATABASE_URL is not set. Using local PGlite embedded database.");
         this.isFallback = true;
       }
 
-      if (this.isFallback && !this.pglite) {
-        const isVercel = !!process.env.VERCEL;
+      if (this.isFallback && !this.pglite && !isVercel) {
         const backendDir = path.resolve(__dirname, "..", "..");
-        const dataDir = isVercel
-          ? path.join(os.tmpdir(), "data")
-          : existsSync(path.resolve(backendDir, "data"))
-            ? path.resolve(backendDir, "data")
-            : existsSync(path.resolve(process.cwd(), "nutrisnap-ai", "backend", "data"))
-              ? path.resolve(process.cwd(), "nutrisnap-ai", "backend", "data")
-              : path.resolve(backendDir, "data");
+        const dataDir = existsSync(path.resolve(backendDir, "data"))
+          ? path.resolve(backendDir, "data")
+          : existsSync(path.resolve(process.cwd(), "nutrisnap-ai", "backend", "data"))
+            ? path.resolve(process.cwd(), "nutrisnap-ai", "backend", "data")
+            : path.resolve(backendDir, "data");
 
         try {
           mkdirSync(dataDir, { recursive: true });
         } catch (e: any) {
           console.warn("[db] Notice: Unable to create data dir:", e.message);
         }
+        const { PGlite } = await import("@electric-sql/pglite");
         this.pglite = new PGlite(path.resolve(dataDir, "nutrisnap.db"));
 
         // Initialize embedded schema using in-memory DDL (zero file I/O dependencies)
@@ -134,6 +147,17 @@ class HybridPool {
           err.code === "EHOSTUNREACH" ||
           err.code === "EADDRNOTAVAIL";
         if (isConnErr) {
+          const isVercel = !!process.env.VERCEL;
+          const isRemote =
+            !!process.env.DATABASE_URL &&
+            !process.env.DATABASE_URL.includes("localhost") &&
+            !process.env.DATABASE_URL.includes("127.0.0.1");
+
+          if (isVercel || isRemote) {
+            console.error(`[db] Production PostgreSQL error during query: ${err.message}`);
+            this.initPromise = null; // Reset so next request can re-attempt
+            throw err;
+          }
           console.warn(`[db] Postgres connection error (${err.code || err.message}). Switching to local PGlite fallback.`);
           this.isFallback = true;
           this.initPromise = null;
@@ -159,6 +183,17 @@ class HybridPool {
         await this.pgPool.query(sql);
         return;
       } catch (err: any) {
+        const isVercel = !!process.env.VERCEL;
+        const isRemote =
+          !!process.env.DATABASE_URL &&
+          !process.env.DATABASE_URL.includes("localhost") &&
+          !process.env.DATABASE_URL.includes("127.0.0.1");
+
+        if (isVercel || isRemote) {
+          console.error(`[db] Production PostgreSQL error during exec: ${err.message}`);
+          this.initPromise = null;
+          throw err;
+        }
         console.warn(`[db] Postgres exec error (${err.code || err.message}). Switching to local PGlite fallback.`);
         this.isFallback = true;
         this.initPromise = null;
@@ -189,6 +224,17 @@ class HybridPool {
           release: () => client.release(),
         };
       } catch (err: any) {
+        const isVercel = !!process.env.VERCEL;
+        const isRemote =
+          !!process.env.DATABASE_URL &&
+          !process.env.DATABASE_URL.includes("localhost") &&
+          !process.env.DATABASE_URL.includes("127.0.0.1");
+
+        if (isVercel || isRemote) {
+          console.error(`[db] Production PostgreSQL error during connect: ${err.message}`);
+          this.initPromise = null;
+          throw err;
+        }
         console.warn(`[db] Postgres connect error (${err.code || err.message}). Switching to local PGlite fallback.`);
         this.isFallback = true;
         this.initPromise = null;

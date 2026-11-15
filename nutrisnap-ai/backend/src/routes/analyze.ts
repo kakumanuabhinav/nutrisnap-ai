@@ -1,11 +1,11 @@
 import { Router } from "express";
 import multer from "multer";
 import rateLimit from "express-rate-limit";
-import sharp from "sharp";
 import crypto from "node:crypto";
 import { requireAuth } from "../middleware/auth.js";
 import { analyzeFoodImage, GeminiAnalysisError } from "../services/geminiService.js";
 import { storeImage } from "../services/storageService.js";
+import { getSharp } from "../services/imageOptimizer.js";
 
 export const analyzeRouter = Router();
 
@@ -86,20 +86,31 @@ analyzeRouter.post(
 
     try {
       const imgProcStart = performance.now();
-      // Optimize image for Gemini API input (max 1024px dimension, JPEG 82 quality)
-      const optimizedBuffer = await sharp(req.file.buffer)
-        .resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality: 82 })
-        .toBuffer();
+      const sharp = await getSharp();
+      let optimizedBase64: string;
+      let effectiveMimeType = req.file.mimetype;
 
-      const optimizedBase64 = optimizedBuffer.toString("base64");
+      if (sharp) {
+        // Optimize image for Gemini API input (max 1024px dimension, JPEG 82 quality)
+        const optimizedBuffer = await sharp(req.file.buffer)
+          .resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true })
+          .jpeg({ quality: 82 })
+          .toBuffer();
+        optimizedBase64 = optimizedBuffer.toString("base64");
+        effectiveMimeType = "image/jpeg";
+      } else {
+        // Fallback when native sharp is unavailable: pass original image buffer directly to Gemini
+        console.warn(`[SCAN] [ID: ${requestId}] Sharp unavailable, proceeding with original uncompressed image buffer`);
+        optimizedBase64 = req.file.buffer.toString("base64");
+      }
+
       const imgProcDuration = Math.round(performance.now() - imgProcStart);
       console.log(
-        `[SCAN] [ID: ${requestId}] Image processing completed in ${imgProcDuration}ms (Original: ${(req.file.size / 1024).toFixed(1)}KB -> Optimized: ${(optimizedBuffer.length / 1024).toFixed(1)}KB, Base64: ${(optimizedBase64.length / 1024).toFixed(1)}KB)`,
+        `[SCAN] [ID: ${requestId}] Image preparation completed in ${imgProcDuration}ms (MIME: ${effectiveMimeType}, Base64: ${(optimizedBase64.length / 1024).toFixed(1)}KB, SharpUsed: ${!!sharp})`,
       );
 
       const aiStart = performance.now();
-      const analysis = await analyzeFoodImage(optimizedBase64, "image/jpeg");
+      const analysis = await analyzeFoodImage(optimizedBase64, effectiveMimeType);
       const aiDuration = Math.round(performance.now() - aiStart);
       console.log(`[SCAN] [ID: ${requestId}] Gemini AI request & validation completed in ${aiDuration}ms`);
 

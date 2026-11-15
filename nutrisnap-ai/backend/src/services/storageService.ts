@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
-import sharp from "sharp";
+import { getSharp } from "./imageOptimizer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const backendDir = path.resolve(__dirname, "..", "..");
@@ -28,12 +28,28 @@ const UPLOAD_DIR = isVercel
  */
 export async function storeImage(buffer: Buffer, mimeType: string): Promise<string> {
   const driver = process.env.STORAGE_DRIVER || "local";
-  const compressed = await sharp(buffer)
-    .resize({ width: 1280, withoutEnlargement: true })
-    .jpeg({ quality: 78 })
-    .toBuffer();
+  const sharp = await getSharp();
+  let compressed: Buffer;
+  let ext: string;
 
-  const filename = `${crypto.randomUUID()}.jpg`;
+  if (sharp) {
+    try {
+      compressed = await sharp(buffer)
+        .resize({ width: 1280, withoutEnlargement: true })
+        .jpeg({ quality: 78 })
+        .toBuffer();
+      ext = "jpg";
+    } catch (err: any) {
+      console.warn("[storage] Sharp compression failed, storing raw buffer:", err?.message);
+      compressed = buffer;
+      ext = mimeType.includes("png") ? "png" : mimeType.includes("webp") ? "webp" : "jpg";
+    }
+  } else {
+    compressed = buffer;
+    ext = mimeType.includes("png") ? "png" : mimeType.includes("webp") ? "webp" : "jpg";
+  }
+
+  const filename = `${crypto.randomUUID()}.${ext}`;
 
   if (driver === "local") {
     try {
